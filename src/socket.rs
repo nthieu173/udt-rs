@@ -55,25 +55,20 @@ impl UdtSocket {
             Ok(Self { id: sock })
         }
     }
-    pub fn bind<A: ToSocketAddrs>(self, addrs: A) -> Result<Self> {
-        if let Ok(addrs) = addrs.to_socket_addrs() {
-            for addr in addrs {
-                let os_addr: OsSocketAddr = addr.into();
-                let result = unsafe {
-                    udt_sys::udt_bind(
-                        self.id,
-                        os_addr.as_ptr() as *const sockaddr,
-                        os_addr.len() as i32,
-                    )
-                };
-                if result == unsafe { udt_sys::UDT_ERROR } {
-                    return error::get_error(self);
-                } else {
-                    return Ok(self);
-                }
-            }
+    pub fn bind(self, addr: SocketAddr) -> Result<Self> {
+        let os_addr: OsSocketAddr = addr.into();
+        let result = unsafe {
+            udt_sys::udt_bind(
+                self.id,
+                os_addr.as_ptr() as *const sockaddr,
+                os_addr.len() as i32,
+            )
+        };
+        if result == unsafe { udt_sys::UDT_ERROR } {
+            return error::get_error(self);
+        } else {
+            return Ok(self);
         }
-        Err(UdtError::SockFail("invalid address".to_string()))
     }
     pub fn connect<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
         if let Ok(addrs) = addrs.to_socket_addrs() {

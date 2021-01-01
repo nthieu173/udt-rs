@@ -130,43 +130,48 @@ pub struct UdtBuilder {
 }
 
 impl UdtBuilder {
-    pub fn bind_ipv4<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundSocket> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(local)?;
-        Ok(UdtBoundSocket { socket })
+    pub fn bind<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundSocket> {
+        if let Ok(addrs) = local.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                let socket = socket.bind(addr)?;
+                return Ok(UdtBoundSocket { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
-    pub fn bind_ipv6<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundSocket> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(local)?;
-        Ok(UdtBoundSocket { socket })
+    pub fn connect<A: ToSocketAddrs>(self, remote: A) -> Result<UdtStream> {
+        if let Ok(addrs) = remote.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                socket.connect(remote)?;
+                return Ok(UdtStream { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
-    pub fn connect_ipv4<A: ToSocketAddrs>(self, remote: A) -> Result<UdtStream> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        socket.connect(remote)?;
-        Ok(UdtStream { socket })
-    }
-    pub fn connect_ipv6<A: ToSocketAddrs>(self, remote: A) -> Result<UdtStream> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        socket.connect(remote)?;
-        Ok(UdtStream { socket })
-    }
-    pub fn listen_ipv4<A: ToSocketAddrs>(self, addr: A, backlog: i32) -> Result<UdtListener> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(addr)?;
-        socket.listen(backlog)?;
-        Ok(UdtListener { socket })
-    }
-    pub fn listen_ipv6<A: ToSocketAddrs>(self, addr: A, backlog: i32) -> Result<UdtListener> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(addr)?;
-        socket.listen(backlog)?;
-        Ok(UdtListener { socket })
+    pub fn listen<A: ToSocketAddrs>(self, addrs: A, backlog: i32) -> Result<UdtListener> {
+        if let Ok(addrs) = addrs.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                let socket = socket.bind(addr)?;
+                socket.listen(backlog)?;
+                return Ok(UdtListener { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
 }
 
@@ -175,24 +180,24 @@ impl UdtBuilder {
         self.opt_vec.push(UdtSockOpt::Mss(val));
         self
     }
-    pub fn set_snd_syn(mut self, val: bool) -> Self {
-        self.opt_vec.push(UdtSockOpt::SndSyn(val));
-        self
-    }
-    pub fn set_rcv_syn(mut self, val: bool) -> Self {
-        self.opt_vec.push(UdtSockOpt::RcvSyn(val));
-        self
-    }
     pub fn set_fc(mut self, val: i32) -> Self {
         self.opt_vec.push(UdtSockOpt::Fc(val));
         self
     }
-    pub fn set_snd_fuf(mut self, val: i32) -> Self {
+    pub fn set_snd_buf(mut self, val: i32) -> Self {
         self.opt_vec.push(UdtSockOpt::SndBuf(val));
         self
     }
     pub fn set_rcv_buf(mut self, val: i32) -> Self {
         self.opt_vec.push(UdtSockOpt::RcvBuf(val));
+        self
+    }
+    pub fn set_udp_snd_buf(mut self, val: i32) -> Self {
+        self.opt_vec.push(UdtSockOpt::UdpSndBuf(val));
+        self
+    }
+    pub fn set_udp_rcv_buf(mut self, val: i32) -> Self {
+        self.opt_vec.push(UdtSockOpt::UdpRcvBuf(val));
         self
     }
     pub fn set_linger(mut self, val: i32) -> Self {
@@ -228,6 +233,8 @@ impl UdtBuilder {
                 UdtSockOpt::Fc(val) => socket.set_fc(val)?,
                 UdtSockOpt::SndBuf(val) => socket.set_sndbuf(val)?,
                 UdtSockOpt::RcvBuf(val) => socket.set_rcvbuf(val)?,
+                UdtSockOpt::UdpSndBuf(val) => socket.set_udp_sndbuf(val)?,
+                UdtSockOpt::UdpRcvBuf(val) => socket.set_udp_rcvbuf(val)?,
                 UdtSockOpt::Linger(val) => socket.set_linger(val)?,
                 UdtSockOpt::Rendezvous(val) => socket.set_rendezvous(val)?,
                 UdtSockOpt::SndTimeo(val) => socket.set_sndtimeo(val)?,
@@ -488,43 +495,48 @@ pub struct UdtAsyncBuilder {
 }
 
 impl UdtAsyncBuilder {
-    pub fn bind_ipv4<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundAsyncSocket> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(local)?;
-        Ok(UdtBoundAsyncSocket { socket })
+    pub fn bind<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundAsyncSocket> {
+        if let Ok(addrs) = local.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                let socket = socket.bind(addr)?;
+                return Ok(UdtBoundAsyncSocket { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
-    pub fn bind_ipv6<A: ToSocketAddrs>(self, local: A) -> Result<UdtBoundAsyncSocket> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(local)?;
-        Ok(UdtBoundAsyncSocket { socket })
+    pub fn connect<A: ToSocketAddrs>(self, remote: A) -> Result<ConnectFuture> {
+        if let Ok(addrs) = remote.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                socket.connect(remote)?;
+                return Ok(ConnectFuture { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
-    pub fn connect_ipv4<A: ToSocketAddrs>(self, remote: A) -> Result<ConnectFuture> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        socket.connect(remote)?;
-        Ok(ConnectFuture { socket })
-    }
-    pub fn connect_ipv6<A: ToSocketAddrs>(self, remote: A) -> Result<ConnectFuture> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        socket.connect(remote)?;
-        Ok(ConnectFuture { socket })
-    }
-    pub fn listen_ipv4<A: ToSocketAddrs>(self, addr: A, backlog: i32) -> Result<UdtAsyncListener> {
-        let socket = UdtSocket::new_ipv4()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(addr)?;
-        socket.listen(backlog)?; // Still synchronous
-        Ok(UdtAsyncListener { socket })
-    }
-    pub fn listen_ipv6<A: ToSocketAddrs>(self, addr: A, backlog: i32) -> Result<UdtAsyncListener> {
-        let socket = UdtSocket::new_ipv6()?;
-        self.config_socket(&socket)?;
-        let socket = socket.bind(addr)?;
-        socket.listen(backlog)?; // Still synchronous
-        Ok(UdtAsyncListener { socket })
+    pub fn listen<A: ToSocketAddrs>(self, addrs: A, backlog: i32) -> Result<UdtAsyncListener> {
+        if let Ok(addrs) = addrs.to_socket_addrs() {
+            for addr in addrs {
+                let socket = match addr {
+                    SocketAddr::V4(_) => UdtSocket::new_ipv4()?,
+                    SocketAddr::V6(_) => UdtSocket::new_ipv6()?,
+                };
+                self.config_socket(&socket)?;
+                let socket = socket.bind(addr)?;
+                socket.listen(backlog)?; // Still synchronous
+                return Ok(UdtAsyncListener { socket });
+            }
+        }
+        Err(UdtError::SockFail("invalid address".to_string()))
     }
 }
 
@@ -537,12 +549,20 @@ impl UdtAsyncBuilder {
         self.opt_vec.push(UdtSockOpt::Fc(val));
         self
     }
-    pub fn set_snd_fuf(mut self, val: i32) -> Self {
+    pub fn set_snd_buf(mut self, val: i32) -> Self {
         self.opt_vec.push(UdtSockOpt::SndBuf(val));
         self
     }
     pub fn set_rcv_buf(mut self, val: i32) -> Self {
         self.opt_vec.push(UdtSockOpt::RcvBuf(val));
+        self
+    }
+    pub fn set_udp_snd_buf(mut self, val: i32) -> Self {
+        self.opt_vec.push(UdtSockOpt::UdpSndBuf(val));
+        self
+    }
+    pub fn set_udp_rcv_buf(mut self, val: i32) -> Self {
+        self.opt_vec.push(UdtSockOpt::UdpRcvBuf(val));
         self
     }
     pub fn set_linger(mut self, val: i32) -> Self {
@@ -578,6 +598,8 @@ impl UdtAsyncBuilder {
                 UdtSockOpt::Fc(val) => socket.set_fc(val)?,
                 UdtSockOpt::SndBuf(val) => socket.set_sndbuf(val)?,
                 UdtSockOpt::RcvBuf(val) => socket.set_rcvbuf(val)?,
+                UdtSockOpt::UdpSndBuf(val) => socket.set_udp_sndbuf(val)?,
+                UdtSockOpt::UdpRcvBuf(val) => socket.set_udp_rcvbuf(val)?,
                 UdtSockOpt::Linger(val) => socket.set_linger(val)?,
                 UdtSockOpt::Rendezvous(val) => socket.set_rendezvous(val)?,
                 UdtSockOpt::SndTimeo(val) => socket.set_sndtimeo(val)?,
@@ -598,6 +620,8 @@ enum UdtSockOpt {
     Fc(i32),
     SndBuf(i32),
     RcvBuf(i32),
+    UdpSndBuf(i32),
+    UdpRcvBuf(i32),
     Linger(i32),
     Rendezvous(bool),
     SndTimeo(i32),
@@ -737,7 +761,7 @@ mod tests {
         thread::spawn(move || {
             let listen = udt::builder()
                 .set_reuse_addr(false)
-                .listen_ipv6("[::1]:0", 1)
+                .listen("[::1]:0", 1)
                 .expect("fail listen()");
             let local = listen.local_addr().expect("fail local_addr()");
             tx.send(local).expect("fail send through mpsc channel");
@@ -749,7 +773,7 @@ mod tests {
         println!("{}", addr);
         let mut connect = udt::builder()
             .set_reuse_addr(false)
-            .connect_ipv6(addr)
+            .connect(addr)
             .expect("fail connect()");
         let mut buf = [0; 7];
         connect.read_exact(&mut buf).expect("fail read()");
@@ -764,7 +788,7 @@ mod tests {
         let listen_task = async move {
             let listen = udt::async_builder()
                 .set_reuse_addr(false)
-                .listen_ipv6("[::1]:0", 1)
+                .listen("[::1]:0", 1)
                 .expect("fail listen()");
             let local = listen.local_addr().expect("fail local_addr()");
             tx.send(local).expect("fail send through mpsc channel");
@@ -776,7 +800,7 @@ mod tests {
             let addr = rx.recv().expect("fail recv through mpsc channel");
             let mut connect = udt::async_builder()
                 .set_reuse_addr(false)
-                .connect_ipv6(addr)
+                .connect(addr)
                 .expect("fail start connect")
                 .await
                 .expect("fail connect");
@@ -797,7 +821,7 @@ mod tests {
         thread::spawn(move || {
             let listen = udt::builder()
                 .set_reuse_addr(false)
-                .listen_ipv4("127.0.0.1:0", 1)
+                .listen("127.0.0.1:0", 1)
                 .expect("fail listen()");
             let local = listen.local_addr().expect("fail local_addr()");
             tx.send(local).expect("fail send through mpsc channel");
@@ -808,7 +832,7 @@ mod tests {
         let addr = rx.recv().expect("fail recv through mpsc channel");
         let mut connect = udt::builder()
             .set_reuse_addr(false)
-            .connect_ipv4(addr)
+            .connect(addr)
             .expect("fail connect()");
         let mut buf = [0; 7];
         connect.read_exact(&mut buf).expect("fail read()");
@@ -826,7 +850,7 @@ mod tests {
         let listen_task = async move {
             let listen = udt::async_builder()
                 .set_reuse_addr(false)
-                .listen_ipv4("127.0.0.1:0", 1)
+                .listen("127.0.0.1:0", 1)
                 .expect("fail listen()");
             let local = listen.local_addr().expect("fail local_addr()");
             tx.send(local).expect("fail send through mpsc channel");
@@ -838,7 +862,7 @@ mod tests {
             let addr = rx.recv().expect("fail recv through mpsc channel");
             let mut connect = udt::async_builder()
                 .set_reuse_addr(false)
-                .connect_ipv4(addr)
+                .connect(addr)
                 .expect("fail start connect")
                 .await
                 .expect("fail connect");
@@ -863,7 +887,7 @@ mod tests {
             let one = udt::builder()
                 .set_reuse_addr(false)
                 .set_rendezvous(true)
-                .bind_ipv4("127.0.0.1:0")
+                .bind("127.0.0.1:0")
                 .expect("fail bind()");
             let local = one.local_addr().expect("fail local_addr()");
             tx_1.send(local).expect("fail send through mpsc channel");
@@ -875,7 +899,7 @@ mod tests {
         let two = udt::builder()
             .set_reuse_addr(false)
             .set_rendezvous(true)
-            .bind_ipv4("127.0.0.2:0")
+            .bind("127.0.0.2:0")
             .expect("fail bind()");
         let local = two.local_addr().expect("fail local_addr()");
         tx_2.send(local).expect("fail send through mpsc channel");
