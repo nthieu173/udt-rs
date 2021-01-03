@@ -5,6 +5,7 @@ use os_socketaddr::{self, OsSocketAddr};
 use udt_sys::{self, sockaddr};
 
 use std::{
+    convert::TryInto,
     ffi::c_void,
     mem,
     net::{SocketAddr, ToSocketAddrs},
@@ -15,7 +16,10 @@ use std::{
 use libc::{linger, AF_INET, AF_INET6, SOCK_STREAM};
 
 #[cfg(target_os = "windows")]
-use winapi::um::winsock2::linger;
+use winapi::{
+    shared::ws2def::{AF_INET, AF_INET6},
+    um::winsock2::{linger, SOCK_STREAM},
+};
 
 type Result<T> = std::result::Result<T, UdtError>;
 
@@ -351,9 +355,9 @@ impl UdtSocket {
             )
         };
         if result == unsafe { udt_sys::UDT_ERROR } {
-            error::get_error(val.l_linger)
+            error::get_error(val.l_linger.into())
         } else {
-            Ok(val.l_linger)
+            Ok(val.l_linger.into())
         }
     }
     pub fn get_rendezvous(&self) -> Result<bool> {
@@ -685,7 +689,7 @@ impl UdtSocket {
     pub fn set_linger(&self, time: i32) -> Result<()> {
         let linger = linger {
             l_onoff: if time <= 0 { 0 } else { 1 },
-            l_linger: time,
+            l_linger: time.try_into().expect("linger time out of scope"),
         };
         let result = unsafe {
             udt_sys::udt_setsockopt(
